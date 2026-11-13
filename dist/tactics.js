@@ -1,0 +1,33 @@
+'use strict';
+const FORMATION_NAMES={loose:'Szyk luźny',wall:'Mur tarcz',wedge:'Klin'};
+function formationMoveSpots(units,x,y){
+ const kind=units[0]?.formation||'loose',out=[],used=new Set();
+ if(kind==='wall')units.sort((a,b)=>(a.kind==='shield'?0:isRangedUnit(a)?2:1)-(b.kind==='shield'?0:isRangedUnit(b)?2:1));
+ const looseColumns=Math.min(4,units.length);
+ // Center the occupied rows, including an incomplete final row.
+ const looseCenterY=units.length?Math.round(units.reduce((sum,_,i)=>sum+2*Math.floor(i/looseColumns),0)/units.length):0;
+ for(let i=0;i<units.length;i++){
+  let dx,dy;
+  if(kind==='wall'){const columns=Math.max(1,Math.ceil(units.length/2));dx=i%columns-Math.floor(columns/2);dy=Math.floor(i/columns)}
+  else if(kind==='wedge'){const row=Math.floor(Math.sqrt(i)),start=row*row;dx=(i-start)-row;dy=row}
+  else{const row=Math.floor(i/looseColumns),inRow=Math.min(looseColumns,units.length-row*looseColumns);dx=(i%looseColumns-(inRow-1)/2)*2;dy=row*2-looseCenterY}
+  let spot=null;
+  for(let r=0;r<=3&&!spot;r++)for(let a=-r;a<=r&&!spot;a++)for(let b=-r;b<=r&&!spot;b++){
+   const px=x+dx+a,py=y+dy+b,k=tileKey(px,py);
+   if(!used.has(k)&&seen.has(k)&&unitWalkable(units[i],px,py)&&!foreignBuilding(px,py))spot={x:px,y:py};
+  }
+  if(!spot)break;used.add(tileKey(spot.x,spot.y));out.push(spot);
+ }
+ return out;
+}
+function setTroopFormation(kind){const units=selectedActors().filter(u=>!ENGINE_TYPES[u.kind]);if(!FORMATION_NAMES[kind]||!units.length){say('Najpierw zaznacz od 1 do 10 żołnierzy.');return false}for(const u of units)u.formation=kind;save();renderTactics(true);say(FORMATION_NAMES[kind]+': wskaż miejsce rozkazem Idź, aby ustawić oddział.');return true}
+function shieldWallActive(u){return u.formation==='wall'&&ownSoldierActors().some(v=>v!==u&&v.hp>0&&v.formation==='wall'&&Math.hypot(v.x-u.x,v.y-u.y)<1.8*T)}
+const tacticsArmor=armorDamage;armorDamage=function(amount,u){return tacticsArmor(amount,u)*(u?.kind==='shield'?.55:1)*(u&&shieldWallActive(u)?.75:1)*(u?.formation==='wedge'?1.1:1)};
+const tacticsDamage=soldierDamage;soldierDamage=function(u){return tacticsDamage(u)*(!isRangedUnit(u)&&u.formation==='wedge'?1.2:1)};
+const tacticsMove=stepOrder;stepOrder=function(u,goal,dt,speed=96){return tacticsMove(u,goal,dt,speed*(u.formation==='wall'?.75:1))};const tacticsDefendMove=moveDefender;moveDefender=function(u,p,dt){return tacticsDefendMove(u,p,dt*(u.formation==='wall'?.75:1))};
+function drawCrossbowUnit(u){const x=u.x,y=u.y;ctx.fillStyle='#20342b55';ctx.beginPath();ctx.ellipse(x,y+8,11,4,0,0,7);ctx.fill();drawWalkingLegs(x,y,u,'#493e31');artRect(x-7,y-17,14,17,'#7f929a');ctx.fillStyle='#efd1a1';ctx.beginPath();ctx.arc(x,y-23,6,0,7);ctx.fill();artRect(x-8,y-30,16,6,'#a4b4b7');artRect(x-7,y-18,14,3,'#5a6970')}
+const tacticsDraw=drawBattleActor;drawBattleActor=function(u,color){tacticsDraw(u,color);if(u.kind==='crossbow'){ctx.strokeStyle='#6b4d36';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(u.x-9,u.y-14);ctx.lineTo(u.x+11,u.y-14);ctx.moveTo(u.x+2,u.y-20);ctx.lineTo(u.x+2,u.y-6);ctx.stroke();ctx.lineWidth=1;artRect(u.x-6,u.y-28,12,3,'#899aa2')}if(u.kind==='shield'){polygon([[u.x-15,u.y-20],[u.x-4,u.y-23],[u.x-1,u.y-6],[u.x-9,u.y+2],[u.x-17,u.y-7]],'#537b81');artLine([[u.x-10,u.y-19],[u.x-8,u.y-1]],'#d8cc98',2);artRect(u.x-8,u.y-30,16,4,'#aab8b5')}if(u.formation){ctx.strokeStyle=u.formation==='wall'?'#9ec3c5':u.formation==='wedge'?'#deb977':'#c4d29d';ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(u.x,u.y+9,12,4,0,0,7);ctx.stroke()}};
+const tacticsArmy=armyStrength;armyStrength=function(count,army){return tacticsArmy(count,army)+(army||[]).slice(0,count).reduce((n,u)=>n+(u.kind==='crossbow'?1:0)+(u.formation==='wedge'?1:0),0)};
+const tacticsPanel=document.createElement('aside');tacticsPanel.id='tacticsPanel';tacticsPanel.className='war-panel hidden';tacticsPanel.innerHTML='<div class="war-title"><h2>Kusznicy, tarcze i formacje</h2><button id="tacticsClose">✕</button></div><div id="tacticsContent"></div>';document.body.append(tacticsPanel);const tacticsOpen=document.createElement('button');tacticsOpen.textContent='🛡 Wojsko i formacje';tacticsOpen.onclick=()=>{$('tacticsPanel').classList.remove('hidden');renderTactics(true)};$('clockControls').append(tacticsOpen);$('tacticsClose').onclick=()=>$('tacticsPanel').classList.add('hidden');let tacticsSignature='';
+function renderTactics(force=false){if($('tacticsPanel').classList.contains('hidden'))return;const units=selectedActors(),signature=JSON.stringify([state.war.queue.map(q=>[q.kind,Math.ceil(q.remaining)]),state.war.guards.map(u=>[u.uid,u.kind,u.formation]),units.map(u=>u.uid),Math.floor(state.wood),Math.floor(state.food),Math.floor(state.stone)]);if(!force&&signature===tacticsSignature)return;tacticsSignature=signature;const btn=(k,label)=>'<button data-tactics="'+k+'">'+label+'</button>';$('tacticsContent').innerHTML='<h3>Nowi obrońcy</h3><p>Wymagają biura werbunkowego i wolnego miejsca w wojsku. Kusznik: 4 obrażenia co 2,2 s, zasięg 6 pól. Tarczownik: 1,6 obrażeń i o 45% mniejsze otrzymywane obrażenia.</p>'+btn('crossbow','Werbuj kusznika · 30 drewna, 5 kamienia, 15 żywności · 14 s')+btn('shield','Werbuj tarczownika · 25 drewna, 8 kamienia, 15 żywności · 12 s')+'<p>W garnizonie: '+state.war.guards.filter(u=>u.kind==='crossbow').length+' kuszników, '+state.war.guards.filter(u=>u.kind==='shield').length+' tarczowników.</p><p>Kolejka: '+(state.war.queue.map(q=>(q.kind==='crossbow'?'Kusznik':q.kind==='shield'?'Tarczownik':'Żołnierz')+' '+Math.ceil(q.remaining)+' s').join(', ')||'pusta')+'</p><h3>Formacje · zaznacz do 10 żołnierzy</h3><p>Luźny szyk: odstępy 2 pól. Mur tarcz: ciasne szeregi, ruch wolniejszy o 25%, obrażenia mniejsze o 25%, gdy obok stoi sojusznik w tym samym szyku. Klin: +20% obrażeń w zwarciu, ale +10% otrzymywanych obrażeń. Premia działa także podczas patrolu.</p>'+btn('select','Zaznacz pierwszych 10 żołnierzy')+Object.entries(FORMATION_NAMES).map(([k,n])=>btn('formation:'+k,n)).join('')+btn('move','Idź — ustaw formację na mapie')+'<p>Zaznaczono: '+units.length+'. '+units.filter(u=>u.formation).map(u=>FORMATION_NAMES[u.formation]).join(', ')+'</p>'}
+$('tacticsContent').onclick=e=>{const b=e.target.closest('[data-tactics]');if(!b)return;const [k,value]=b.dataset.tactics.split(':');if(['crossbow','shield'].includes(k))recruitSoldier(k);else if(k==='select')selectArmy();else if(k==='formation')setTroopFormation(value);else if(k==='move'){if(armCommand('move'))$('tacticsPanel').classList.add('hidden')}renderTactics(true)};const tacticsUI=ui;ui=function(){tacticsUI();renderTactics()};window.addEventListener('keydown',e=>{if(e.key==='Escape')$('tacticsPanel').classList.add('hidden')});
